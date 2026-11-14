@@ -86,7 +86,7 @@ export async function checkService({
 
     stage = 'tools/list';
     const { tools } = await rpc('tools/list');
-    for (const name of ['codex_chat', 'codex_draw']) {
+    for (const name of ['codex_chat', 'codex_draw', 'codex_edit']) {
       const tool = Array.isArray(tools) && tools.find((item) => item.name === name);
       if (!tool || tool.inputSchema?.type !== 'object' || tool.inputSchema?.properties?.prompt?.type !== 'string') {
         throw new Error(`Missing tool or prompt schema: ${name}`);

@@ -3,8 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-
-const MAX_BODY_BYTES = 1024 * 1024;
+import { MAX_BODY_BYTES, uploadsSchema } from './attachments.js';
 
 function sendJson(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'application/json' });
@@ -19,7 +18,7 @@ function readJson(request) {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
         chunks.length = 0;
-        reject(Object.assign(new Error('Request body exceeds 1 MiB'), { status: 413 }));
+        reject(Object.assign(new Error('Request body exceeds 30 MiB'), { status: 413 }));
       } else chunks.push(chunk);
     });
     request.on('error', reject);
@@ -34,14 +33,17 @@ function readJson(request) {
 function createMcpServer(run, logger, requestId, signal) {
   const server = new McpServer({ name: 'codex-mcp-server', version: '0.1.0' });
   for (const [name, description] of [
-    ['codex_chat', 'Send a text prompt to Codex CLI and return its answer. Stateless: include prior conversation in the prompt when needed.'],
+    ['codex_chat', 'Send a prompt with optional uploaded attachments to Codex CLI and return its answer. Stateless: include prior conversation in the prompt when needed.'],
     ['codex_draw', 'Generate one PNG using Codex image generation. Returns inline image data and a local saved path. Requires an image-capable Codex installation/account.'],
+    ['codex_edit', 'Edit one or more uploaded reference images according to a prompt. Returns one edited PNG inline and a local saved path. Requires an image-capable Codex installation/account.'],
   ]) {
     server.registerTool(name, {
       description,
       inputSchema: z.object({
         prompt: z.string().trim().min(1).max(100_000).describe('Text question or image description'),
         model: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/).optional().describe('Optional Codex model; defaults to the CLI configuration'),
+        ...(name === 'codex_chat' ? { attachments: uploadsSchema().optional().describe('Up to 10 base64 files; 10 MiB each, 20 MiB total. Images: PNG, JPEG or WebP. Other files are read from the task directory.') } : {}),
+        ...(name === 'codex_edit' ? { images: uploadsSchema(true).describe('1–10 base64 reference images (PNG, JPEG or WebP); 10 MiB each, 20 MiB total') } : {}),
       }).strict(),
     }, async (input, extra) => {
       const started = Date.now();
