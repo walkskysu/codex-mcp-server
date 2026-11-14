@@ -2,7 +2,25 @@
 
 把本机 Codex CLI 暴露为两个 MCP 工具：文字对话 `codex_chat` 和画图 `codex_draw`。默认地址为 **`http://127.0.0.1:9827/mcp`**，使用官方 MCP SDK 的无状态 Streamable HTTP（JSON 响应）。
 
-## 安装与启动
+## 安装 skill / 接入已有服务
+
+其他 AI Agent 安装本项目 skill 时，**不安装 Codex CLI、不执行 Codex 登录、不启动服务**。将 [`skills/codex-mcp-server`](skills/codex-mcp-server/SKILL.md) 整个目录（含脚本）复制到 Agent 的技能目录即可。客户端只连接已运行的 MCP 服务；Codex CLI 和账号由服务端维护。
+
+使用已有 Node.js 22+ 检测服务，无需 `npm install`：
+
+```sh
+node skills/codex-mcp-server/scripts/check-service.mjs
+# 自定义服务端口
+node skills/codex-mcp-server/scripts/check-service.mjs --url http://127.0.0.1:9828/mcp
+# 额外验证图片生成能力
+node skills/codex-mcp-server/scripts/check-service.mjs --draw
+```
+
+检测包含 HTTP 端口和 `/health`、MCP 初始化与工具发现，以及一次真实 `codex_chat` 调用。默认不生成图片；`--draw` 会额外调用 `codex_draw` 并检查 PNG 内容。真实调用使用服务端账号，可能产生用量。成功退出码为 0，失败为 1 并输出失败阶段；服务未启动、协议不匹配或后端不可用时报告问题，不自动安装或修复服务端。协议请求默认 10 秒、工具调用默认 660 秒，可通过 `--timeout-ms` / `--tool-timeout-ms` 调整。
+
+## 服务端部署（仅服务维护者）
+
+以下步骤只用于用户主动部署服务端，不是 skill 的安装步骤。
 
 需要 Node.js 22+、已安装并登录的 Codex CLI。画图还需要当前 Codex CLI / 账号具备图片生成能力及可用的 `imagegen` 技能。先在同一系统用户下确认 Codex 可以正常对话和生成图片。
 
@@ -102,5 +120,7 @@ npm test
 ```
 
 使用 Node 内置测试框架、真实 HTTP MCP 客户端和独立 CLI fixture 进程，不需要登录、API key 或付费模型调用。覆盖工具发现、文字与图片返回、请求校验、双通道日志、CLI 启动失败/非零退出/超时/取消/输出上限、并发限制和 Windows 启动器解析。fixture 测试验证协议及集成路径，不验证实际账号的模型或图片生成可用性。
+
+skill 检测脚本的测试还覆盖无客户端 CLI 的独立运行、自定义端口、协议协商、健康检查/协议/工具调用失败、超时、默认只验证文字及显式图片验证。
 
 参考：[Codex 非交互执行](https://developers.openai.com/codex/noninteractive)、[图片生成](https://learn.chatgpt.com/docs/image-generation?surface=cli)、[MCP SDK Streamable HTTP](https://ts.sdk.modelcontextprotocol.io/server)。
