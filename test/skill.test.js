@@ -85,7 +85,7 @@ async function fakeServer(t, reply) {
     if (body.method === 'notifications/initialized') { response.writeHead(202); response.end(); return; }
     const results = {
       initialize: { protocolVersion: '2025-03-26', serverInfo: { name: 'fixture', version: '1' }, capabilities: { tools: {} } },
-      'tools/list': { tools: ['codex_chat', 'codex_draw'].map((name) => ({ name, inputSchema: { type: 'object', properties: { prompt: { type: 'string' } } } })) },
+      'tools/list': { tools: ['codex_chat', 'codex_draw', 'codex_edit'].map((name) => ({ name, inputSchema: { type: 'object', properties: { prompt: { type: 'string' } } } })) },
       'tools/call': { content: [{ type: 'text', text: 'OK' }] },
     };
     response.writeHead(200, { 'Content-Type': 'application/json' });
@@ -99,6 +99,17 @@ async function fakeServer(t, reply) {
 test('protocol negotiation sends the negotiated version on subsequent requests', async (t) => {
   const url = await fakeServer(t, () => undefined);
   assert.equal((await checkService({ url })).protocolVersion, '2025-03-26');
+});
+
+test('service check reports an older server missing the image editing tool', async (t) => {
+  const url = await fakeServer(t, (_request, body) => {
+    if (body?.method === 'tools/list') return { body: {
+      jsonrpc: '2.0', id: body.id, result: {
+        tools: ['codex_chat', 'codex_draw'].map((name) => ({ name, inputSchema: { type: 'object', properties: { prompt: { type: 'string' } } } })),
+      },
+    } };
+  });
+  await assert.rejects(checkService({ url }), /tools\/list: Missing tool or prompt schema: codex_edit/);
 });
 
 for (const [name, method, override, expected] of [

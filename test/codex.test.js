@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createCodexRunner, resolveCodexCommand } from '../src/codex.js';
-import { setup } from './helpers.js';
+import { setup, pngData } from './helpers.js';
 
 test('text uses stdin literally and fixed noninteractive sandbox arguments', async (t) => {
   const { config, logger } = await setup(t);
@@ -34,6 +34,54 @@ test('drawing returns actual PNG bytes and retains isolated artifacts', async (t
   assert.match(invocation.prompt, /\$imagegen/);
   assert.match(invocation.prompt, /画猫/);
   assert.ok(invocation.args.includes('workspace-write'));
+});
+
+test('chat stages mixed attachments and passes only images as CLI image arguments', async (t) => {
+  const { config, logger } = await setup(t);
+  const requestId = randomUUID();
+  const attachments = [
+    { name: '需求.txt', mimeType: 'text/plain', data: Buffer.from('请描述照片').toString('base64') },
+    { name: 'photo.png', mimeType: 'image/png', data: pngData },
+    { name: 'photo.png', mimeType: 'image/png', data: pngData },
+  ];
+  await createCodexRunner(config, logger)({ tool: 'codex_chat', prompt: '分析附件', attachments, requestId });
+  const invocation = JSON.parse(await readFile(path.join(config.dataDir, requestId, 'invocation.json'), 'utf8'));
+  assert.deepEqual(invocation.attachments.map((file) => file.data), attachments.map((file) => file.data));
+  assert.deepEqual(invocation.images, [pngData, pngData]);
+  assert.match(invocation.prompt, /需求.txt/);
+  assert.match(invocation.prompt, /attachments\/1.txt/);
+  assert.ok(invocation.args.includes('read-only'));
+  assert.equal(invocation.args.at(-1), '-');
+});
+
+for (const count of [1, 2]) {
+  test(`edit forwards ${count} reference image(s) and returns saved PNG bytes`, async (t) => {
+    const { config, logger } = await setup(t);
+    const requestId = randomUUID();
+    const images = Array(count).fill({ name: 'reference.png', mimeType: 'image/png', data: pngData });
+    const result = await createCodexRunner(config, logger)({ tool: 'codex_edit', prompt: '把背景改成蓝色', images, requestId });
+    const invocation = JSON.parse(await readFile(path.join(config.dataDir, requestId, 'invocation.json'), 'utf8'));
+    assert.deepEqual(invocation.images, images.map((file) => file.data));
+    assert.equal(invocation.attachments.length, count);
+    assert.match(invocation.prompt, /Edit the supplied reference images/);
+    assert.match(invocation.prompt, /把背景改成蓝色/);
+    assert.match(invocation.prompt, /\$imagegen/);
+    assert.ok(invocation.args.includes('workspace-write'));
+    assert.deepEqual(Buffer.from(result.content[1].data, 'base64'), await readFile(path.join(config.dataDir, requestId, 'output.png')));
+  });
+}
+
+test('edit propagates generation failures and invalid uploads never launch the CLI', async (t) => {
+  const { config, logger, consoleLines } = await setup(t);
+  const run = createCodexRunner(config, logger);
+  const images = [{ name: 'photo.png', mimeType: 'image/png', data: pngData }];
+  for (const [model, error] of [['fixture-no-image', /did not create output.png/], ['fixture-invalid-image', /not a PNG/], ['fixture-fail', /authentication failure/]]) {
+    await assert.rejects(run({ tool: 'codex_edit', prompt: 'edit', model, images, requestId: randomUUID() }), error);
+  }
+  const before = consoleLines.length;
+  await assert.rejects(run({ tool: 'codex_edit', prompt: 'edit', images: [{ ...images[0], data: 'bm90IHBob3Rv' }], requestId: randomUUID() }), /valid PNG/);
+  assert.equal(consoleLines.length, before);
+  assert.equal((await run({ tool: 'codex_chat', prompt: 'still works', requestId: randomUUID() })).content[0].text, 'Reply: still works');
 });
 
 for (const [model, tool, message] of [

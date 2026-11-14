@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.js';
 import { createLogger } from '../src/logger.js';
 
+export const pngData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6l1sAAAAASUVORK5CYII=';
+
 export async function setup(t, overrides = {}) {
   const root = path.resolve('.test-tmp');
   await mkdir(root, { recursive: true });

@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
@@ -6,7 +6,18 @@ const value = (flag) => args[args.indexOf(flag) + 1];
 const model = args.includes('--model') ? value('--model') : '';
 let prompt = '';
 for await (const chunk of process.stdin) prompt += chunk.toString('utf8');
-await writeFile('invocation.json', JSON.stringify({ args, prompt, cwd: process.cwd(), pid: process.pid }));
+const attachments = [];
+try {
+  for (const name of await readdir('attachments')) {
+    attachments.push({ name, data: (await readFile(path.join('attachments', name))).toString('base64') });
+  }
+} catch (error) { if (error.code !== 'ENOENT') throw error; }
+// Read images from exactly the CLI argument paths, independently of the manifest.
+const images = [];
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--image') images.push((await readFile(args[++i])).toString('base64'));
+}
+await writeFile('invocation.json', JSON.stringify({ args, prompt, attachments, images, cwd: process.cwd(), pid: process.pid }));
 if (model === 'fixture-fail') { console.error('fixture authentication failure'); process.exit(7); }
 if (model === 'fixture-hang') await new Promise(() => setInterval(() => {}, 1000));
 if (model === 'fixture-delay') await new Promise((resolve) => setTimeout(resolve, 300));
