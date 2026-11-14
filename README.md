@@ -1,0 +1,106 @@
+# Codex MCP Server
+
+把本机 Codex CLI 暴露为两个 MCP 工具：文字对话 `codex_chat` 和画图 `codex_draw`。默认地址为 **`http://127.0.0.1:9827/mcp`**，使用官方 MCP SDK 的无状态 Streamable HTTP（JSON 响应）。
+
+## 安装与启动
+
+需要 Node.js 22+、已安装并登录的 Codex CLI。画图还需要当前 Codex CLI / 账号具备图片生成能力及可用的 `imagegen` 技能。先在同一系统用户下确认 Codex 可以正常对话和生成图片。
+
+```sh
+npm install -g @openai/codex
+codex login
+npm ci
+npm start
+```
+
+Windows PowerShell 可使用 `npm.cmd`、`codex.cmd`。服务支持 npm 安装的 Windows Codex 启动器，会解析到其 JavaScript 入口并直接调用 Node，避免通过 shell 执行请求文本。
+
+健康检查：`GET http://127.0.0.1:9827/health`。此接口仅表示服务正在运行，不验证 Codex 登录状态。
+
+## 连接 AI Agent
+
+在支持 Streamable HTTP 的 MCP 客户端中添加：
+
+```json
+{
+  "mcpServers": {
+    "codex-local": {
+      "url": "http://127.0.0.1:9827/mcp"
+    }
+  }
+}
+```
+
+不同客户端配置格式可能不同，请将传输类型设为 HTTP / Streamable HTTP。该服务不提供旧版 `/sse` 传输，也不使用 stdio。
+
+使用本项目依赖的 JavaScript SDK：
+
+```js
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
+const client = new Client({ name: 'my-agent', version: '1.0.0' });
+await client.connect(new StreamableHTTPClientTransport(
+  new URL('http://127.0.0.1:9827/mcp'),
+));
+try {
+  console.log(await client.callTool({
+    name: 'codex_chat',
+    arguments: { prompt: '用中文解释什么是 MCP' },
+  }, undefined, { timeout: 660_000 }));
+  console.log(await client.callTool({
+    name: 'codex_draw',
+    arguments: { prompt: '画一只在月球上喝茶的猫，水彩风格' },
+  }, undefined, { timeout: 660_000 }));
+} finally {
+  await client.close();
+}
+```
+
+两个工具均接受必填 `prompt`（1–100,000 字符）和可选 `model`（Codex 模型名称，省略时使用 CLI 配置）。每次调用都是独立的 Codex 执行；多轮聊天请在 `prompt` 中带上需要的历史上下文。
+
+- `codex_chat`：通过 stdin 传递提示词，以 `codex exec` 执行，返回最终回复的 MCP `text` 内容。
+- `codex_draw`：提示 Codex 使用 `$imagegen` 生成一张图片，并保存到独立任务目录的 `output.png`。返回 PNG 的 MCP `image` 内容（base64）以及本机文件路径，调用方无需访问服务器文件系统即可显示图片。
+
+画图读取实际 PNG 文件，不把 CLI 返回的文字当作图片。CLI 不支持生图、账号无权限、未输出图片、文件格式错误或图片超过 10 MiB 时返回 `isError: true`，并附带错误说明。服务不直接调用 Images API；画图能力和费用取决于本机 Codex 配置。
+
+## 配置
+
+通过环境变量配置（服务不会自动加载 `.env`）：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PORT` | `9827` | HTTP 端口，1–65535 |
+| `CODEX_BIN` | `codex` | CLI 命令或可执行文件 / JS 入口路径；不支持拼接额外命令参数 |
+| `CODEX_TIMEOUT_MS` | `600000` | 每次 CLI 执行的超时毫秒数 |
+| `CODEX_MAX_CONCURRENT` | `2` | 同时运行的 CLI 数量，1–32；超出时立即返回 busy 错误，可稍后重试 |
+| `LOG_FILE` | `logs/requests.jsonl` | JSONL 日志路径 |
+| `DATA_DIR` | `data/requests` | 各任务的输出目录 |
+
+相对路径以启动服务时的目录为基准。示例（PowerShell）：
+
+```powershell
+$env:PORT = '9827'
+$env:CODEX_TIMEOUT_MS = '900000'
+npm.cmd start
+```
+
+客户端超时也应适当调大，尤其是生成图片时。HTTP 连接中断、服务退出或 CLI 超时会尝试终止对应进程树；Ctrl+C 可停止服务。由于采用无状态传输，跨 HTTP 请求的 MCP `notifications/cancelled` 不关联到先前请求；请关闭原调用的 HTTP 连接以取消执行。
+
+## 日志与执行范围
+
+每个收到的 MCP JSON 请求（包括无效工具名和参数）都会带上唯一 `requestId`，原样打印到 console 并追加到 JSONL 文件。执行命令、任务目录、完成耗时及执行错误使用同一 ID 关联。日志包含完整提示词；请按本机数据保留要求管理。日志和输出文件均已加入 `.gitignore`，不会自动清理或轮转。
+
+服务仅绑定 `127.0.0.1`，检查 Host / Origin，供同机可信 Agent 使用。没有远程认证功能，请勿直接转发到公网。它继承当前用户的 Codex 登录信息、技能及配置；不要在子 Codex 配置中再次启用本服务，以免递归调用。
+
+所有调用在独立任务目录运行，禁用交互式审批；文字工具使用 `read-only` 沙箱，画图使用 `workspace-write`。提示词通过 stdin 传递，子进程使用参数数组和 `shell: false`。服务不允许调用方指定工作目录、额外 CLI 参数或解除沙箱。HTTP 请求体限制为 1 MiB，CLI stdout/stderr 合计和最终文字各限制为 2 MiB。
+
+## 测试
+
+```sh
+npm test
+```
+
+使用 Node 内置测试框架、真实 HTTP MCP 客户端和独立 CLI fixture 进程，不需要登录、API key 或付费模型调用。覆盖工具发现、文字与图片返回、请求校验、双通道日志、CLI 启动失败/非零退出/超时/取消/输出上限、并发限制和 Windows 启动器解析。fixture 测试验证协议及集成路径，不验证实际账号的模型或图片生成可用性。
+
+参考：[Codex 非交互执行](https://developers.openai.com/codex/noninteractive)、[图片生成](https://learn.chatgpt.com/docs/image-generation?surface=cli)、[MCP SDK Streamable HTTP](https://ts.sdk.modelcontextprotocol.io/server)。

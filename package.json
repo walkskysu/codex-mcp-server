@@ -1,0 +1,17 @@
+{
+  "name": "codex-mcp-server",
+  "version": "0.1.0",
+  "description": "A local HTTP MCP server for Codex CLI chat and image generation",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.0.0"
+  }
+}
